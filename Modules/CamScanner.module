@@ -5,4 +5,4 @@
 hostname =%APPEND% ap*.intsig.net
 
 [Script]
-CamScanner=type=http-response,pattern=https:\/\/(api|api-cs)\.intsig\.net\/purchase\/cs\/query_property\?,requires-body=1, script-path=https://raw.githubusercontent.com/hoang3402/ShadowRocket/master/Js/CamScanner.js
+CamScanner=type=http-response,pattern=https:\/\/(api|api-cs)\.intsig\.net\/purchase\/cs\/query_property\?,requires-body=1, script-path=https://raw.githubusercontent.com/hoang3402/ShadowRocket/main/Js/CamScanner.js
