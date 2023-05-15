@@ -1,0 +1,13 @@
+#!name=Youtube Premium
+#!desc=Adblock, phát trong nền, pip
+
+[URL Rewrite]
+^https?:\/\/[\w-]+\.googlevideo\.com\/initplayback.+&oad _ REJECT-IMG
+(^https?:\/\/.+\.googlevideo\.com\/.+)(&ctier=[A-Z])(&.+) $1$3 302
+
+[Script]
+youtube = type=http-response,script-path= https://raw.githubusercontent.com/hoang3402/ShadowRocket/master/Js/youtube.js,pattern=^https:\/\/youtubei\.googleapis\.com\/youtubei\/v1\/(browse|next|player|search|reel\/reel_watch_sequence|guide|account\/get_setting)\?,max-size=131072,requires-body=true,binary-mode=true,timeout=10,script-update-interval=0,enable=true
+
+
+[MITM]
+hostname = %APPEND% *.googlevideo.com, youtubei.googleapis.com
