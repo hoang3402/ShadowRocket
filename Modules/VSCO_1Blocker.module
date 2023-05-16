@@ -1,3 +1,6 @@
+#!name=vsco
+#!desc=
+
 [Script]
 http-request ^https?:\/\/api\.revenuecat\.com\/v\d\/subscribers\/ script-path=https://raw.githubusercontent.com/hoang3402/ShadowRocket/main/Js/vsco.js
 http-response ^https?:\/\/api\.revenuecat\.com\/v\d\/subscribers\/ requires-body=1,script-path=https://raw.githubusercontent.com/hoang3402/ShadowRocket/main/Js/vsco.js
