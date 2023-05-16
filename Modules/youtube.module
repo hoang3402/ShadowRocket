@@ -1,12 +1,11 @@
-#!name=Youtube Premium
+#!name=Youtube Premium (IOS>=15)
 #!desc=Adblock, phát trong nền, pip
 
-[URL Rewrite]
-^https?:\/\/[\w-]+\.googlevideo\.com\/initplayback.+&oad _ REJECT-IMG
-(^https?:\/\/.+\.googlevideo\.com\/.+)(&ctier=[A-Z])(&.+) $1$3 302
-
 [Script]
-youtube=type=http-response,script-path= https://raw.githubusercontent.com/hoang3402/ShadowRocket/main/Js/Youtube.js,pattern=^https:\/\/youtubei\.googleapis\.com\/youtubei\/v1\/(browse|next|player|search|reel\/reel_watch_sequence|guide|account\/get_setting)\?,max-size=131072,requires-body=true,binary-mode=true,timeout=10,script-update-interval=0,enable=true
+youtube = type=http-response,pattern=^https:\/\/youtubei\.googleapis\.com\/youtubei\/v1\/(browse|next|player|search|reel\/reel_watch_sequence|guide|account\/get_setting)\?,requires-body=1,binary-body-mode=1,max-size=3145728,script-path=https://raw.githubusercontent.com/hoang3402/ShadowRocket/main/Js/Youtube.js
+
+[Map Local]
+^https?:\/\/[\w-]+\.googlevideo\.com\/initplayback.+&oad data="https://raw.githubusercontent.com/hoang3402/ShadowRocket/main/Js/blank.txt" header="Content-Type: application/vnd.yt-ump"
 
 [MITM]
 hostname = %APPEND% *.googlevideo.com, youtubei.googleapis.com
