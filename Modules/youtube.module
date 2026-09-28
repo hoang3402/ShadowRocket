@@ -1,15 +1,18 @@
-#!name=Youtube Premium (IOS>=15)
-#!desc=Adblock, phát trong nền, pip
+#!name=Youtube (Music) Enhance
+#!desc=适用于 Youtube & Youtube Music
+#!arguments=屏蔽上传按钮:true,屏蔽选段按钮:true,屏蔽Shorts按钮:false,字幕翻译语言:off,启用调试模式:false
+#!arguments-desc=- 屏蔽参数：[true, false] \n- 翻译参数：[语言代码, off] \n\n1. 语言代码遵循 Google Translate Languages Codes, 当填入 off 时关闭翻译\n2. 开启调试模式用于输出更多日志
 
-# > Credit
-# @Choler & @DivineEngine & @app2smile
+[Rule]
+AND,((DOMAIN-SUFFIX,googlevideo.com),(PROTOCOL,UDP)),REJECT
+AND,((DOMAIN,youtubei.googleapis.com),(PROTOCOL,UDP)),REJECT
 
 [Script]
-youtube.request = type=http-request,pattern=^https:\/\/youtubei\.googleapis\.com\/youtubei\/v1\/(browse|next|player|reel\/reel_watch_sequence)\?,requires-body=1,max-size=-1,binary-body-mode=1,script-path=https://raw.githubusercontent.com/Maasea/sgmodule/master/Script/Youtube/dist/youtube.request.beta.js
-youtube.response = type=http-response,pattern=^https:\/\/youtubei\.googleapis\.com\/youtubei\/v1\/(browse|next|player|search|reel\/reel_watch_sequence|guide|account\/get_setting)\?,requires-body=1,max-size=-1,binary-body-mode=1,script-path=https://raw.githubusercontent.com/Maasea/sgmodule/master/Script/Youtube/dist/youtube.response.beta.js
+youtube.response = type=http-response,pattern=^https:\/\/youtubei\.googleapis\.com\/(youtubei\/v1\/(browse|next|player|search|reel\/reel_watch_sequence|guide|account\/get_setting|get_watch|log_event|config))(\?(.*))?$,requires-body=1,max-size=-1,binary-body-mode=1,script-path=https://raw.githubusercontent.com/Maasea/sgmodule/master/Script/Youtube/youtube.response.js,argument="{"captionLang":"off","blockUpload":true,"blockImmersive":true,"blockShorts":false,"debug":false}"
 
-[Map Local]
-^https?:\/\/[\w-]+\.googlevideo\.com\/initplayback.+&oad data="https://raw.githubusercontent.com/Maasea/sgmodule/master/Script/Youtube/dist/blank.txt" header="Content-Type: application/vnd.yt-ump"
+youtube.request.init = type=http-request,pattern=^https?:\/\/[\w-]+\.googlevideo\.com\/initplayback.+&ack.*,requires-body=1,max-size=-1,binary-body-mode=1,script-path=https://raw.githubusercontent.com/Maasea/sgmodule/master/Script/Youtube/youtube.request.js,argument="{"captionLang":"off"}"
+
+youtube.request.log_event = type=http-request,pattern=^https:\/\/youtubei\.googleapis\.com\/youtubei\/v1\/log_event,requires-body=1,max-size=-1,binary-body-mode=1,script-path=https://raw.githubusercontent.com/Maasea/sgmodule/master/Script/Youtube/youtube.request.js
 
 [MITM]
 hostname = %APPEND% *.googlevideo.com, youtubei.googleapis.com
