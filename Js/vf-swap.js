@@ -9,8 +9,8 @@
  * Tham số (argument, dạng key=value nối bằng &):
  *  - lat, lng, distance : cố định vị trí tìm trạm (mặc định lấy theo URL bắt được từ app)
  *  - top                : số trạm gần nhất cần theo dõi (mặc định 5)
- *  - names              : một phần tên/địa chỉ trạm cần theo dõi, ngăn cách bằng | — không phân biệt hoa thường,
- *                         có dấu hay không dấu (ưu tiên hơn top). Vd: names=le loi|nguyen hue
+ *  - names              : cụm từ trong tên/địa chỉ trạm cần theo dõi, ngăn cách bằng | — không phân biệt hoa thường,
+ *                         dấu, ký tự đặc biệt (ưu tiên hơn top). Vd: names=12 lê lợi|45 nguyễn huệ
  *  - ids                : danh sách id trạm cần theo dõi, ngăn cách bằng | (ưu tiên hơn names, top)
  *  - fields            : các field số pin cần so sánh, ngăn cách bằng | (mặc định tự dò)
  *  - debug=1            : thông báo cấu trúc dữ liệu dò được (dùng khi cấu hình lần đầu)
@@ -100,18 +100,17 @@ function handle(err, resp, body) {
         if (args.debug) $notification.post(TITLE, 'Không dò được danh sách trạm', String(body).slice(0, 300));
         return;
     }
-    const watched = pickStations(all);
-    if (!watched.length) {
-        // Báo 1 lần cho mỗi bộ lọc, kèm tên các trạm gần nhất để dễ chọn lại
-        const filter = args.ids || args.names;
-        if ($persistentStore.read(KEY_FILTER_ALERT) !== filter) {
-            $persistentStore.write(filter, KEY_FILTER_ALERT);
+    const { watched, missing } = pickStations(all);
+    // Báo 1 lần mỗi khi danh sách trạm không tìm thấy thay đổi, kèm tên các trạm gần nhất để dễ sửa bộ lọc
+    const missKey = missing.join('|');
+    if ($persistentStore.read(KEY_FILTER_ALERT) !== missKey) {
+        $persistentStore.write(missKey, KEY_FILTER_ALERT);
+        if (missing.length) {
             const nearest = all.slice(0, 5).map((st) => '• ' + pick(st, NAME_KEYS)).join('\n');
-            $notification.post(TITLE, 'Không có trạm nào khớp: ' + filter, 'Trạm gần nhất:\n' + nearest);
+            $notification.post(TITLE, 'Không tìm thấy ' + missing.length + ' trạm', missing.join('\n') + '\n\nTrạm gần nhất:\n' + nearest);
         }
-        return;
     }
-    $persistentStore.write('', KEY_FILTER_ALERT);
+    if (!watched.length) return;
     const fieldList = args.fields ? args.fields.split('|') : null;
     const prevSnap = readJson(KEY_SNAP) || {};
     const nextSnap = {};
@@ -154,22 +153,41 @@ function sortByDistance(list) {
 
 function pickStations(all) {
     if (args.ids) {
-        const ids = args.ids.split('|');
-        return all.filter((st) => ids.indexOf(String(pick(st, ID_KEYS))) >= 0);
+        const ids = args.ids.split('|').map((s) => s.trim()).filter(Boolean);
+        return filterBy(all, ids, (st, id) => String(pick(st, ID_KEYS)) === id);
     }
     if (args.names) {
-        const names = args.names.split('|').map(norm).filter(Boolean);
-        return all.filter((st) => {
-            const text = norm(NAME_KEYS.map((k) => st[k] || '').join(' '));
-            return names.some((n) => text.indexOf(n) >= 0);
-        });
+        const names = args.names.split('|').map((s) => s.trim()).filter(Boolean);
+        const texts = all.map(stationText);
+        return filterBy(all, names, (st, n) => texts[all.indexOf(st)].indexOf(' ' + norm(n) + ' ') >= 0);
     }
-    return all.slice(0, Number(args.top) || 5);
+    return { watched: all.slice(0, Number(args.top) || 5), missing: [] };
 }
 
-// Bỏ dấu tiếng Việt + chữ thường để so khớp tên trạm
+function filterBy(all, wanted, match) {
+    const watched = all.filter((st) => wanted.some((w) => match(st, w)));
+    const missing = wanted.filter((w) => !all.some((st) => match(st, w)));
+    return { watched, missing };
+}
+
+// Gộp mọi chuỗi trong object trạm (tên, địa chỉ...) để so khớp; ' / ' ngăn cụm từ khớp xuyên qua 2 field
+function stationText(st) {
+    const parts = [];
+    (function walk(v, depth) {
+        if (typeof v === 'string') parts.push(norm(v));
+        else if (v && typeof v === 'object' && depth < 3) Object.keys(v).forEach((k) => walk(v[k], depth + 1));
+    })(st, 0);
+    return ' ' + parts.join(' / ') + ' ';
+}
+
+// Chuẩn hoá để so khớp theo cụm từ: bỏ dấu, chữ thường, bỏ ký tự đặc biệt, tách số/chữ ("12A" → "12 a",
+// "QL1A" → "ql 1 a"), "quốc lộ" → "ql"
 function norm(s) {
-    return String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[đĐ]/g, 'd').toLowerCase().replace(/\s+/g, ' ').trim();
+    return String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[đĐ]/g, 'd').toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .replace(/(\d)([a-z])/g, '$1 $2').replace(/([a-z])(\d)/g, '$1 $2')
+        .replace(/\bquoc lo\b/g, 'ql')
+        .replace(/\s+/g, ' ').trim();
 }
 
 // Tìm mảng object lớn nhất trong response — coi đó là danh sách trạm
