@@ -14,6 +14,7 @@
  *  - ids                : danh sách id trạm cần theo dõi, ngăn cách bằng | (ưu tiên hơn names, top)
  *  - fields            : các field số pin cần so sánh, ngăn cách bằng | (mặc định tự dò)
  *  - debug=1            : thông báo cấu trúc dữ liệu dò được (dùng khi cấu hình lần đầu)
+ *  - push, secret       : (http-request/http-response) không lưu cục bộ mà gửi header cho bot Telegram tại URL push
  */
 
 const KEY_REQ = 'vfswap.req';
@@ -21,6 +22,7 @@ const KEY_SNAP = 'vfswap.snap';
 const KEY_AUTH_ALERT = 'vfswap.authAlert';
 const KEY_SAMPLE = 'vfswap.sample';
 const KEY_FILTER_ALERT = 'vfswap.filterAlert';
+const KEY_PUSHED = 'vfswap.pushed';
 
 const TITLE = '🔋 Trạm đổi pin';
 const LEGEND = ' · pin sẵn/tổng';
@@ -46,6 +48,7 @@ function capture() {
         if (!DROP_HEADERS.test(k)) headers[k] = $request.headers[k];
     });
     const auth = authOf(headers);
+    if (args.push) return pushToken(headers, auth);
     $persistentStore.write(JSON.stringify({ url: $request.url, headers, savedAt: Date.now() }), KEY_REQ);
     if (typeof $response !== 'undefined' && $response.body) {
         $persistentStore.write(String($response.body).slice(0, 20000), KEY_SAMPLE);
@@ -55,6 +58,27 @@ function capture() {
         $notification.post(TITLE, 'Đã lưu phiên đăng nhập', 'Script sẽ tự kiểm tra số pin định kỳ.');
     }
     $done({});
+}
+
+// Gửi header (token) cho bot Telegram — chỉ khi token đổi hoặc đã quá 30 phút, để không gửi ở mọi request của app
+function pushToken(headers, auth) {
+    const last = readJson(KEY_PUSHED) || {};
+    if (last.auth === auth && Date.now() - last.at < 30 * 60 * 1000) return $done({});
+    const opts = {
+        url: args.push,
+        headers: { 'Content-Type': 'application/json', 'X-Secret': args.secret || '' },
+        body: JSON.stringify({ url: $request.url, headers }),
+        timeout: 5,
+    };
+    $httpClient.post(opts, (err, resp) => {
+        const status = resp && (resp.status || resp.statusCode);
+        if (!err && status === 200) {
+            $persistentStore.write(JSON.stringify({ auth, at: Date.now() }), KEY_PUSHED);
+        } else {
+            console.log('[vf-swap] push lỗi: ' + (err || status));
+        }
+        $done({});
+    });
 }
 
 function poll() {
