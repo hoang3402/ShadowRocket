@@ -9,8 +9,10 @@
  * Tham số (argument, dạng key=value nối bằng &):
  *  - lat, lng, distance : cố định vị trí tìm trạm (mặc định lấy theo URL bắt được từ app)
  *  - top                : số trạm gần nhất cần theo dõi (mặc định 5)
- *  - ids                : danh sách id trạm cần theo dõi, ngăn cách bằng | (ưu tiên hơn top)
- *  - fields             : các field số pin cần so sánh, ngăn cách bằng | (mặc định tự dò)
+ *  - names              : một phần tên/địa chỉ trạm cần theo dõi, ngăn cách bằng | — không phân biệt hoa thường,
+ *                         có dấu hay không dấu (ưu tiên hơn top). Vd: names=le loi|nguyen hue
+ *  - ids                : danh sách id trạm cần theo dõi, ngăn cách bằng | (ưu tiên hơn names, top)
+ *  - fields            : các field số pin cần so sánh, ngăn cách bằng | (mặc định tự dò)
  *  - debug=1            : thông báo cấu trúc dữ liệu dò được (dùng khi cấu hình lần đầu)
  */
 
@@ -18,6 +20,7 @@ const KEY_REQ = 'vfswap.req';
 const KEY_SNAP = 'vfswap.snap';
 const KEY_AUTH_ALERT = 'vfswap.authAlert';
 const KEY_SAMPLE = 'vfswap.sample';
+const KEY_FILTER_ALERT = 'vfswap.filterAlert';
 
 const TITLE = '🔋 Trạm đổi pin';
 const DROP_HEADERS = /^(:|content-length$|connection$|host$|accept-encoding$)/i;
@@ -92,17 +95,28 @@ function handle(err, resp, body) {
     }
     $persistentStore.write('', KEY_AUTH_ALERT);
 
-    const all = findStations(json.data !== undefined ? json.data : json);
+    const all = sortByDistance(findStations(json.data !== undefined ? json.data : json));
     if (!all.length) {
         if (args.debug) $notification.post(TITLE, 'Không dò được danh sách trạm', String(body).slice(0, 300));
         return;
     }
     const watched = pickStations(all);
+    if (!watched.length) {
+        // Báo 1 lần cho mỗi bộ lọc, kèm tên các trạm gần nhất để dễ chọn lại
+        const filter = args.ids || args.names;
+        if ($persistentStore.read(KEY_FILTER_ALERT) !== filter) {
+            $persistentStore.write(filter, KEY_FILTER_ALERT);
+            const nearest = all.slice(0, 5).map((st) => '• ' + pick(st, NAME_KEYS)).join('\n');
+            $notification.post(TITLE, 'Không có trạm nào khớp: ' + filter, 'Trạm gần nhất:\n' + nearest);
+        }
+        return;
+    }
+    $persistentStore.write('', KEY_FILTER_ALERT);
     const fieldList = args.fields ? args.fields.split('|') : null;
     const prevSnap = readJson(KEY_SNAP) || {};
-    const firstRun = Object.keys(prevSnap).length === 0;
     const nextSnap = {};
-    const lines = [];
+    const added = [];
+    const changed = [];
 
     watched.forEach((st) => {
         const id = String(pick(st, ID_KEYS) || pick(st, NAME_KEYS));
@@ -110,11 +124,11 @@ function handle(err, resp, body) {
         const vals = fieldList ? pickFields(st, fieldList) : batteryFields(st, '', 0);
         nextSnap[id] = { name, vals };
         const old = prevSnap[id];
-        if (firstRun) {
-            lines.push(name + ': ' + fmtVals(vals));
-        } else if (old) {
+        if (!old) {
+            added.push(name + ': ' + fmtVals(vals));
+        } else {
             const diff = diffVals(old.vals, vals);
-            if (diff) lines.push(name + ': ' + diff);
+            if (diff) changed.push(name + ': ' + diff);
         }
     });
     $persistentStore.write(JSON.stringify(nextSnap), KEY_SNAP);
@@ -122,10 +136,20 @@ function handle(err, resp, body) {
     if (args.debug) {
         $notification.post(TITLE, 'Debug: field của trạm đầu tiên', Object.keys(watched[0]).join(', '));
     }
-    if (lines.length) {
-        const subtitle = firstRun ? 'Bắt đầu theo dõi ' + watched.length + ' trạm' : lines.length + ' trạm thay đổi';
-        $notification.post(TITLE, subtitle, lines.slice(0, 8).join('\n'));
+    if (changed.length) {
+        $notification.post(TITLE, changed.length + ' trạm thay đổi', changed.slice(0, 8).join('\n'));
     }
+    if (added.length) {
+        $notification.post(TITLE, 'Bắt đầu theo dõi ' + added.length + ' trạm', added.slice(0, 8).join('\n'));
+    }
+}
+
+function sortByDistance(list) {
+    const sorted = list.slice();
+    if (sorted.length && pick(sorted[0], DIST_KEYS) !== undefined) {
+        sorted.sort((a, b) => parseFloat(pick(a, DIST_KEYS)) - parseFloat(pick(b, DIST_KEYS)));
+    }
+    return sorted;
 }
 
 function pickStations(all) {
@@ -133,11 +157,19 @@ function pickStations(all) {
         const ids = args.ids.split('|');
         return all.filter((st) => ids.indexOf(String(pick(st, ID_KEYS))) >= 0);
     }
-    const sorted = all.slice();
-    if (pick(sorted[0], DIST_KEYS) !== undefined) {
-        sorted.sort((a, b) => parseFloat(pick(a, DIST_KEYS)) - parseFloat(pick(b, DIST_KEYS)));
+    if (args.names) {
+        const names = args.names.split('|').map(norm).filter(Boolean);
+        return all.filter((st) => {
+            const text = norm(NAME_KEYS.map((k) => st[k] || '').join(' '));
+            return names.some((n) => text.indexOf(n) >= 0);
+        });
     }
-    return sorted.slice(0, Number(args.top) || 5);
+    return all.slice(0, Number(args.top) || 5);
+}
+
+// Bỏ dấu tiếng Việt + chữ thường để so khớp tên trạm
+function norm(s) {
+    return String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[đĐ]/g, 'd').toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
 // Tìm mảng object lớn nhất trong response — coi đó là danh sách trạm
@@ -250,7 +282,7 @@ function readJson(key) {
 
 function parseArgs(s) {
     const out = {};
-    s.split('&').forEach((pair) => {
+    s.trim().replace(/^"|"$/g, '').split('&').forEach((pair) => {
         const i = pair.indexOf('=');
         if (i > 0) out[pair.slice(0, i).trim()] = decodeURIComponent(pair.slice(i + 1).trim());
     });
