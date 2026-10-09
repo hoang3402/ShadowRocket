@@ -23,6 +23,7 @@ const KEY_SAMPLE = 'vfswap.sample';
 const KEY_FILTER_ALERT = 'vfswap.filterAlert';
 
 const TITLE = '🔋 Trạm đổi pin';
+const LEGEND = ' · pin sẵn/tổng';
 const DROP_HEADERS = /^(:|content-length$|connection$|host$|accept-encoding$)/i;
 const ID_KEYS = ['id', 'stationId', 'station_id', 'stationCode', 'code', 'uuid'];
 const NAME_KEYS = ['name', 'stationName', 'station_name', 'displayName', 'title', 'address'];
@@ -106,41 +107,87 @@ function handle(err, resp, body) {
     if ($persistentStore.read(KEY_FILTER_ALERT) !== missKey) {
         $persistentStore.write(missKey, KEY_FILTER_ALERT);
         if (missing.length) {
-            const nearest = all.slice(0, 5).map((st) => '• ' + pick(st, NAME_KEYS)).join('\n');
-            $notification.post(TITLE, 'Không tìm thấy ' + missing.length + ' trạm', missing.join('\n') + '\n\nTrạm gần nhất:\n' + nearest);
+            const nearest = all.slice(0, 5).map((st) => '• ' + shortName(st)).join('\n');
+            $notification.post(TITLE, 'Không tìm thấy ' + missing.length + ' trạm', missing.map((m) => '• ' + m).join('\n') + '\n\nTrạm gần nhất:\n' + nearest);
         }
     }
     if (!watched.length) return;
-    const fieldList = args.fields ? args.fields.split('|') : null;
+    const fieldList = args.fields ? splitArg(args.fields) : null;
     const prevSnap = readJson(KEY_SNAP) || {};
     const nextSnap = {};
     const added = [];
     const changed = [];
 
-    watched.forEach((st) => {
+    watched.forEach(({ st, label }) => {
         const id = String(pick(st, ID_KEYS) || pick(st, NAME_KEYS));
-        const name = String(pick(st, NAME_KEYS) || id);
-        const vals = fieldList ? pickFields(st, fieldList) : batteryFields(st, '', 0);
-        nextSnap[id] = { name, vals };
+        const vals = readBattery(st, fieldList);
+        nextSnap[id] = { name: label, vals };
         const old = prevSnap[id];
-        if (!old) {
-            added.push(name + ': ' + fmtVals(vals));
+        // Snapshot cũ khác định dạng (bản script trước) thì coi như trạm mới
+        if (!old || ('avail' in old.vals) !== ('avail' in vals)) {
+            added.push(lineOf(label, vals));
         } else {
-            const diff = diffVals(old.vals, vals);
-            if (diff) changed.push(name + ': ' + diff);
+            const line = changeOf(label, old.vals, vals);
+            if (line) changed.push(line);
         }
     });
     $persistentStore.write(JSON.stringify(nextSnap), KEY_SNAP);
 
     if (args.debug) {
-        $notification.post(TITLE, 'Debug: field của trạm đầu tiên', Object.keys(watched[0]).join(', '));
+        $notification.post(TITLE, 'Debug: dữ liệu trạm đầu tiên', JSON.stringify(watched[0].st).slice(0, 1000));
     }
     if (changed.length) {
-        $notification.post(TITLE, changed.length + ' trạm thay đổi', changed.slice(0, 8).join('\n'));
+        $notification.post(TITLE, changed.length + ' trạm thay đổi' + LEGEND, changed.slice(0, 10).join('\n'));
     }
     if (added.length) {
-        $notification.post(TITLE, 'Bắt đầu theo dõi ' + added.length + ' trạm', added.slice(0, 8).join('\n'));
+        const kind = args.names || args.ids ? 'đã chọn' : 'gần nhất';
+        $notification.post(TITLE, 'Theo dõi ' + added.length + ' trạm ' + kind + LEGEND, added.slice(0, 10).join('\n'));
     }
+}
+
+// Response có numberBatteryAvailable (pin sẵn sàng) / numberBattery (tổng pin trong tủ); thiếu thì tự dò
+function readBattery(st, fieldList) {
+    if (fieldList) return pickFields(st, fieldList);
+    if ('numberBatteryAvailable' in st || 'numberBattery' in st) {
+        return { avail: toNum(st.numberBatteryAvailable), total: toNum(st.numberBattery) };
+    }
+    return batteryFields(st, '', 0);
+}
+
+function lineOf(label, vals) {
+    if (vals.avail != null) return dot(vals.avail) + ' ' + label + ': ' + vals.avail + '/' + fmt(vals.total);
+    const keys = Object.keys(vals).filter((k) => vals[k] != null);
+    if (!keys.length || 'avail' in vals) return '⚪ ' + label + ': chưa có dữ liệu pin';
+    return '⚪ ' + label + ': ' + keys.map((k) => k + '=' + vals[k]).join(', ');
+}
+
+function changeOf(label, oldVals, vals) {
+    if ('avail' in vals) {
+        if (oldVals.avail === vals.avail) return null;
+        if (vals.avail == null) return '⚪ ' + label + ': ' + fmt(oldVals.avail) + ' → không có dữ liệu';
+        return dot(vals.avail) + ' ' + label + ': ' + fmt(oldVals.avail) + ' → ' + vals.avail + '/' + fmt(vals.total);
+    }
+    const diff = diffVals(oldVals, vals);
+    return diff ? '⚪ ' + label + ': ' + diff : null;
+}
+
+function dot(n) {
+    return n <= 0 ? '🔴' : n < 3 ? '🟡' : '🟢';
+}
+
+// Tên trạm gọn: bỏ phần sau dấu phẩy, mã nội bộ ("ĐML_HCM_TDU - "), tiền tố "TĐP"/"số"
+function shortName(st) {
+    const s = String(pick(st, NAME_KEYS) || pick(st, ID_KEYS) || '?').split(',')[0]
+        .replace(/^[^\s_]+(_[^\s_]+)+\s*-\s*/, '')
+        .replace(/^(TĐP|Trạm đổi pin)\s+/i, '')
+        .replace(/^số\s+/i, '')
+        .trim();
+    return s.length > 40 ? s.slice(0, 39) + '…' : s;
+}
+
+// "12a lê lợi" → "12A Lê Lợi"
+function prettyLabel(s) {
+    return s.split(/\s+/).map((w) => (/^\d/.test(w) ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1))).join(' ');
 }
 
 function sortByDistance(list) {
@@ -153,21 +200,33 @@ function sortByDistance(list) {
 
 function pickStations(all) {
     if (args.ids) {
-        const ids = args.ids.split('|').map((s) => s.trim()).filter(Boolean);
-        return filterBy(all, ids, (st, id) => String(pick(st, ID_KEYS)) === id);
+        return pickBy(all, splitArg(args.ids), (st, id) => String(pick(st, ID_KEYS)) === id, () => null);
     }
     if (args.names) {
-        const names = args.names.split('|').map((s) => s.trim()).filter(Boolean);
         const texts = all.map(stationText);
-        return filterBy(all, names, (st, n) => texts[all.indexOf(st)].indexOf(' ' + norm(n) + ' ') >= 0);
+        return pickBy(all, splitArg(args.names), (st, n) => texts[all.indexOf(st)].indexOf(' ' + norm(n) + ' ') >= 0, prettyLabel);
     }
-    return { watched: all.slice(0, Number(args.top) || 5), missing: [] };
+    return { watched: all.slice(0, Number(args.top) || 5).map((st) => ({ st, label: shortName(st) })), missing: [] };
 }
 
-function filterBy(all, wanted, match) {
-    const watched = all.filter((st) => wanted.some((w) => match(st, w)));
-    const missing = wanted.filter((w) => !all.some((st) => match(st, w)));
+// Giữ thứ tự người dùng nhập; nhãn hiển thị lấy theo giá trị lọc (nếu có) cho dễ nhận ra
+function pickBy(all, wanted, match, labelOf) {
+    const watched = [];
+    const missing = [];
+    wanted.forEach((w) => {
+        const found = all.filter((st) => match(st, w));
+        if (!found.length) missing.push(w);
+        found.filter((st) => !watched.some((x) => x.st === st)).forEach((st) => {
+            const base = labelOf(w);
+            const label = !base ? shortName(st) : found.length > 1 ? base + ' · ' + shortName(st) : base;
+            watched.push({ st, label });
+        });
+    });
     return { watched, missing };
+}
+
+function splitArg(s) {
+    return s.split('|').map((x) => x.trim()).filter(Boolean);
 }
 
 // Gộp mọi chuỗi trong object trạm (tên, địa chỉ...) để so khớp; ' / ' ngăn cụm từ khớp xuyên qua 2 field
@@ -246,13 +305,12 @@ function diffVals(a, b) {
     return parts.join(', ');
 }
 
-function fmtVals(vals) {
-    const keys = Object.keys(vals);
-    return keys.length ? keys.map((k) => k + '=' + vals[k]).join(', ') : '(không dò được field pin, bật debug=1)';
+function fmt(v) {
+    return v == null ? '?' : String(v);
 }
 
-function fmt(v) {
-    return v === undefined ? '∅' : String(v);
+function toNum(v) {
+    return v == null || v === '' || isNaN(v) ? null : Number(v);
 }
 
 function buildUrl(url) {
